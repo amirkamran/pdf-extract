@@ -1,6 +1,7 @@
 package pdfextract;
 
 import ch.qos.logback.classic.Level;
+import pdfextract.DetectLanguage.LanguageResult;
 import pdfextract.HTMLObject.*;
 
 import java.io.BufferedReader;
@@ -29,6 +30,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.fit.pdfdom.PDFDomTree;
@@ -61,6 +63,7 @@ public class PDFExtract {
 	private Pattern patternBlankSpace = Pattern.compile("<div class=\"r\"");
 	private Pattern patternImage = Pattern.compile("<img.*");
 	private Pattern patternPageStartTag = Pattern.compile("<div class=\"page\"[^>]*>");
+	private Pattern patternSentenceTag = Pattern.compile("(<span [^>]*>)(.*)(</span>)");
 
 	private static final String REGEX_TOP = ".*top:([\\-\\+0-9]+.[0-9]+).*";
 	private static final String REGEX_LEFT = ".*left:([\\-\\+0-9]+.[0-9]+).*";
@@ -244,6 +247,8 @@ public class PDFExtract {
 				 * Call function to normalize html
 				 */
 				htmlBuffer = Normalize(htmlBuffer, refPages, language);
+
+				htmlBuffer = GetLanguage(htmlBuffer, refPages);
 			} else {
 
 				/**
@@ -1024,7 +1029,10 @@ public class PDFExtract {
 			searchReplaceList = common.getSearchReplaceList();
 
 			for (PageObject page : pages) {
-				String pageContent = GetPageNormalizedHtml(page, hashClasses, language);
+				AtomicReference<PageObject> refPage = new AtomicReference<PageObject>(page);
+
+				String pageContent = GetPageNormalizedHtml(refPage, hashClasses, language);
+				page.html = new StringBuilder(pageContent);
 				sbPageAll.append(pageContent);
 			}
 
@@ -1131,13 +1139,14 @@ public class PDFExtract {
 	/**
 	 * Get page normalize html
 	 */
-	private String GetPageNormalizedHtml(PageObject page, AtomicReference<Hashtable<String, Integer>> hashClasses,
-			String language) {
+	private String GetPageNormalizedHtml(AtomicReference<PageObject> refPage,
+			AtomicReference<Hashtable<String, Integer>> hashClasses, String language) {
 		String sPageNormalized = "";
 		Hashtable<String, Integer> _hashClasses = hashClasses.get();
 		if (_hashClasses == null)
 			_hashClasses = new Hashtable<String, Integer>();
 
+		PageObject page = refPage.get();
 		int iPageID = page.pageno;
 
 		List<ColumnObject> listColumnLeft = page.columns;
@@ -1210,7 +1219,7 @@ public class PDFExtract {
 						sStyle = text.style;
 					}
 
-					sLine = common.replaceText(searchReplaceList, sLine);
+					sLine = common.replaceText(searchReplaceList, sLine).trim();
 					sStyle = "";
 
 					String sColumnParagraphLine = GetTemplate(Tempate.columnparagraphline.toString())
@@ -1224,26 +1233,25 @@ public class PDFExtract {
 							.replace("[" + TempateStyle.LINESTYLE.toString() + "]", sStyle)
 							.replace("[" + TempateContent.COLUMNPARAGRAPHLINE.toString() + "]", sLine);
 
+					sColumnParagraphLine = StringUtils.chomp(sColumnParagraphLine);
 					if (scriptEngine != null && sColumnParagraphLine.length() > 0) {
 						String sResult = common.getStr(invokeJS("repairObjectSequence", sColumnParagraphLine));
 						if (sResult.split("\n").length == sColumnParagraphLineAll.split("\n").length) {
-							sColumnParagraphLine = sResult;
+							sColumnParagraphLine = sResult.trim();
 						}
 					}
 
-					sColumnParagraphLineAll += sColumnParagraphLine + "\n";
+					line.html = sColumnParagraphLine;
+
+					sColumnParagraphLineAll += sColumnParagraphLine; // + "\n";
 					iLineID++;
 				}
 
-				if (scriptEngine != null && sColumnParagraphLineAll.length() > 0) {
-					// call analyzeJoins
-					String sResult = common.getStr(invokeJS("analyzeJoins", sColumnParagraphLineAll, language));
-					if (sResult.split("\n").length == sColumnParagraphLineAll.split("\n").length) {
-						sColumnParagraphLineAll = sResult;
-					}
+				sColumnParagraphLineAll += "\n";
 
+				if (scriptEngine != null && sColumnParagraphLineAll.length() > 0) {
 					// call isHeader
-					sResult = common.getStr(invokeJS("isHeader", sColumnParagraphLineAll));
+					String sResult = common.getStr(invokeJS("isHeader", sColumnParagraphLineAll));
 					if (sResult.split("\n").length == sColumnParagraphLineAll.split("\n").length) {
 						sColumnParagraphLineAll = sResult;
 					}
@@ -1264,10 +1272,15 @@ public class PDFExtract {
 						.replace("[" + TempateStyle.HEIGHT.toString() + "]", common.getStr(paragraph.height))
 						.replace("[" + TempateStyle.WIDTH.toString() + "]", common.getStr(paragraph.width))
 						.replace("[" + TempateContent.COLUMNPARAGRAPH.toString() + "]", sColumnParagraphLineAll);
+
+				sColumnParagraph = StringUtils.chomp(sColumnParagraph);
 				sColumnParagraphAll += sColumnParagraph;
 				iParagraphID++;
 
 			}
+
+			sColumnParagraphAll += "\n";
+
 			String sColumn = GetTemplate(Tempate.column.toString())
 					.replace("[" + TempateID.COLUMNID.toString() + "]",
 							common.getStr(iPageID) + "c" + common.getStr(iColumnID))
@@ -1277,9 +1290,12 @@ public class PDFExtract {
 					.replace("[" + TempateStyle.WIDTH.toString() + "]", common.getStr(column.width))
 					.replace("[" + TempateContent.COLUMN.toString() + "]", sColumnParagraphAll);
 
+			sColumn = StringUtils.chomp(sColumn);
 			sColumnAll += sColumn;
 			iColumnID++;
 		}
+		sColumnAll += "\n";
+
 		sPageNormalized = GetTemplate(Tempate.page.toString())
 				.replace("[" + TempateID.PAGEID.toString() + "]", common.getStr(iPageID))
 				.replace("[" + TempateContent.PAGE.toString() + "]", sColumnAll);
@@ -1287,6 +1303,145 @@ public class PDFExtract {
 		hashClasses.set(_hashClasses);
 
 		return sPageNormalized;
+	}
+
+	/**
+	 * Get page normalize html
+	 */
+	private String removeHtmlTag(String text) {
+		if (text.indexOf("<body") > -1) {
+			text = text.substring(text.indexOf("<body"));
+			text = text.substring(0, text.indexOf("</body>"));
+		}
+		text = text.replaceAll("<[^>]*>", "");
+		text = text.replaceAll("\n{2,100}", "\n");
+		return text;
+	}
+
+	private StringBuffer GetLanguage(StringBuffer htmlBuffer, AtomicReference<List<PageObject>> refPages) {
+
+		String sContent = htmlBuffer.toString();
+		String text = "";
+		String defaultLang = "";
+
+		DetectLanguage detectLang = new DetectLanguage();
+		List<LanguageResult> results;
+		float threshold = 95;
+		boolean oneLangDocument = false;
+
+		List<PageObject> pages = refPages.get();
+
+		// All
+		// get text all
+		text = removeHtmlTag(sContent);
+		results = detectLang.find(text);
+
+		int i = 0;
+		LanguageResult result0 = results.get(0);
+		defaultLang = result0.language;
+		if (result0.percent > threshold) {
+			oneLangDocument = true;
+		}
+
+		if (sContent.indexOf("<html>") > -1) {
+			String prefix = sContent.substring(0, "<html>".length() + 1);
+			String suffix = sContent.substring("<html>".length() + 1);
+			sContent = "";
+			sContent += prefix;
+			sContent += "\n<head>";
+			sContent += "\n\t<defaultLang abbr=\"" + defaultLang + "\" />";
+			sContent += "\n\t<languages>";
+			for (LanguageResult lang : results) {
+				sContent += "\n\t\t<language abbr=\"" + lang.language + "\" percent=\"" + lang.percent + "\" />";
+			}
+			sContent += "\n\t</languages>";
+			sContent += "\n</head>";
+			sContent += suffix;
+		}
+
+		boolean oneLangPage = false;
+		if (!oneLangDocument) {
+			pages = refPages.get();
+
+			// By Page
+			for (PageObject page : pages) {
+				String pageLang = "";
+
+				text = removeHtmlTag(page.html.toString());
+				results = detectLang.find(text);
+				i = 0;
+
+				for (LanguageResult result : results) {
+					if (i == 0) {
+						if (result.percent > threshold) {
+							oneLangPage = true;
+							pageLang = result.language;
+							break;
+						}
+					}
+					i++;
+				}
+
+				if (oneLangPage) {
+					page.language = pageLang;
+				} else {
+
+					// By Sentence
+					String pageContent = page.html.toString();
+					StringBuffer pageBuffer = new StringBuffer();
+
+					Matcher m = patternSentenceTag.matcher(pageContent);
+					while (m.find()) {
+						text = removeHtmlTag(m.group(2));
+						results = detectLang.find(text);
+						LanguageResult result = results.get(0);
+
+						if (!result.language.equals(defaultLang)) {
+							String spanOpen = m.group(1);
+							spanOpen = spanOpen.replace("<span", "<span lang=\"" + result.language + "\"");
+							m.appendReplacement(pageBuffer, spanOpen + "$2$3");
+						}
+					}
+					m.appendTail(pageBuffer);
+
+					page.html = new StringBuilder(pageBuffer.toString());
+				}
+
+			}
+		}
+
+		if (!oneLangDocument && !oneLangPage) {
+
+			String prefix = sContent.substring(0, sContent.indexOf("<div"));
+			String suffix = sContent.substring(sContent.indexOf("</body>"));
+
+			StringBuilder allPage = new StringBuilder();
+			for (PageObject page : pages) {
+				allPage.append(page.html.toString().trim());
+				allPage.append("\n");
+			}
+
+			sContent = prefix + allPage.toString() + suffix;
+		}
+
+		for (PageObject page : pages) {
+			for (ColumnObject column : page.columns) {
+				for (ParagraphObject paragraph : column.paragraphs) {
+					StringBuilder sbParagraph = new StringBuilder();
+					for (LineObject line : paragraph.lines) {
+						sbParagraph.append(line.html);
+					}
+
+					String sParagraph = sbParagraph.toString();
+					String language = defaultLang;
+
+					String sResult = common.getStr(invokeJS("analyzeJoins", sParagraph, language));
+					sbParagraph = new StringBuilder(sResult);
+				}
+			}
+		}
+
+		return new StringBuffer(sContent);
 	}
 
 	/**

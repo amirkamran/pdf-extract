@@ -101,5 +101,7 @@ public class HTMLObject {
 		public float height;
 		public List<TextObject> texts = new ArrayList<TextObject>();
 		public List<ColumnObject> columns = new ArrayList<ColumnObject>();
+		public StringBuilder html = new StringBuilder();
+		public String language = "";
 	}
 }
