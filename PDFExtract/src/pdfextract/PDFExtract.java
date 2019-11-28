@@ -24,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.script.Invocable;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -37,6 +36,7 @@ import org.fit.pdfdom.PDFDomTree;
 import org.fit.pdfdom.PDFDomTreeConfig;
 import org.fit.pdfdom.resource.HtmlResourceHandler;
 import org.fit.pdfdom.resource.IgnoreResourceHandler;
+import org.jsoup.Jsoup;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
@@ -52,12 +52,7 @@ public class PDFExtract {
 	private final boolean runnable = true;
 
 	private String logPath = "";
-	private String customScript = "";
 	private boolean writeLogFile = true;
-	private boolean loadEngineFail = false;
-	private Object lockerExtract = new Object();
-	private Invocable scriptEngine = null;
-	private List<String> failFunctionList = new ArrayList<String>();
 	private Pattern patternP = Pattern.compile("<div class=\"p\"");
 	private Pattern patternPage = Pattern.compile("<div class=\"page\"");
 	private Pattern patternBlankSpace = Pattern.compile("<div class=\"r\"");
@@ -94,11 +89,12 @@ public class PDFExtract {
 	private ExecutorService executor;
 	private static float fontSizeScale = 0.5f;
 
-	private void initial(String logFilePath) throws Exception {
+	private void initial(String logFilePath, int verbose) throws Exception {
 		ch.qos.logback.classic.Logger rootLogger = (ch.qos.logback.classic.Logger) LoggerFactory
 				.getLogger(ch.qos.logback.classic.Logger.ROOT_LOGGER_NAME);
 		rootLogger.setLevel(Level.toLevel("off"));
 
+		common.setVerbose(verbose);
 		if (common.IsEmpty(logFilePath)) {
 			writeLogFile = false;
 		} else {
@@ -131,7 +127,7 @@ public class PDFExtract {
 	 * @throws Exception
 	 */
 	public PDFExtract() throws Exception {
-		initial("");
+		initial("", 0);
 	}
 
 	/**
@@ -141,7 +137,18 @@ public class PDFExtract {
 	 * @throws Exception
 	 */
 	public PDFExtract(String logFilePath) throws Exception {
-		initial(logFilePath);
+		initial(logFilePath, 0);
+	}
+
+	/**
+	 * Initializes a newly created PDFExtract object.
+	 * 
+	 * @param logFilePath The path to write the log file to.
+	 * @param verbose     Print the information to stdout (1=print, 0=silence)
+	 * @throws Exception
+	 */
+	public PDFExtract(String logFilePath, int verbose) throws Exception {
+		initial(logFilePath, verbose);
 	}
 
 	/**
@@ -211,22 +218,6 @@ public class PDFExtract {
 			 */
 			if (!common.getExtension(inputFile).toLowerCase().equals("pdf")) {
 				throw new Exception("Input file extension is not pdf.");
-			}
-
-			/**
-			 * Read rule script and load into object
-			 */
-			synchronized (lockerExtract) {
-				customScript = common.getCustomScript(rulePath, customScript);
-			}
-			if (common.IsNull(scriptEngine) && !common.IsEmpty(customScript) && !loadEngineFail) {
-				synchronized (lockerExtract) {
-					if (scriptEngine == null && !loadEngineFail) {
-						scriptEngine = common.getJSEngine(customScript);
-						if (scriptEngine == null)
-							loadEngineFail = true;
-					}
-				}
 			}
 
 			StringBuffer htmlBuffer = new StringBuffer("");
@@ -371,8 +362,7 @@ public class PDFExtract {
 			if (writeLogFile) {
 				common.writeLog(logPath, "Input Stream", "Error: " + message, true);
 			} else {
-				if (!runnable)
-					common.print("Input Stream", "Error: " + message);
+				common.print("Input Stream", "Error: " + message);
 			}
 
 			throw e;
@@ -421,18 +411,6 @@ public class PDFExtract {
 			 */
 			if (!common.IsExist(batchFile)) {
 				throw new Exception("Input batch file does not exist.");
-			}
-
-			/**
-			 * Read rule script and load into object
-			 */
-			if (common.IsEmpty(customScript)) {
-				customScript = common.getCustomScript(rulePath, customScript);
-			}
-			if (!common.IsEmpty(customScript)) {
-				scriptEngine = common.getJSEngine(customScript);
-				if (scriptEngine == null)
-					loadEngineFail = true;
 			}
 
 			if (threadCount == 0)
@@ -542,7 +520,6 @@ public class PDFExtract {
 		PDDocument pdf = null;
 		StringWriter output = null;
 		try {
-			// loads the PDF file, parse it and gets html file
 			pdf = PDDocument.load(new java.io.File(inputFile));
 			HtmlResourceHandler handler = new IgnoreResourceHandler();
 			PDFDomTreeConfig config = PDFDomTreeConfig.createDefaultConfig();
@@ -582,6 +559,7 @@ public class PDFExtract {
 			PDFDomTree parser = new PDFDomTree(config);
 			output = new StringWriter();
 			parser.writeText(pdf, output);
+
 			return output.getBuffer();
 		} catch (Exception e) {
 			throw e;
@@ -645,6 +623,7 @@ public class PDFExtract {
 
 					if (currentPage > 0) {
 						pages.add(page);
+						Thread.sleep(50);
 					}
 
 					currentPage++;
@@ -759,8 +738,10 @@ public class PDFExtract {
 
 	/**
 	 * Get boxes
+	 * 
+	 * @throws InterruptedException
 	 */
-	private void getBox(AtomicReference<List<PageObject>> refPages) {
+	private void getBox(AtomicReference<List<PageObject>> refPages) throws InterruptedException {
 		List<PageObject> pages = refPages.get();
 		for (PageObject page : pages) {
 
@@ -1008,6 +989,7 @@ public class PDFExtract {
 				}
 			}
 
+			Thread.sleep(10);
 		}
 	}
 
@@ -1034,6 +1016,7 @@ public class PDFExtract {
 				String pageContent = GetPageNormalizedHtml(refPage, hashClasses, language);
 				page.html = new StringBuilder(pageContent);
 				sbPageAll.append(pageContent);
+				Thread.sleep(50);
 			}
 
 			/**
@@ -1234,13 +1217,6 @@ public class PDFExtract {
 							.replace("[" + TempateContent.COLUMNPARAGRAPHLINE.toString() + "]", sLine);
 
 					sColumnParagraphLine = StringUtils.chomp(sColumnParagraphLine);
-					if (scriptEngine != null && sColumnParagraphLine.length() > 0) {
-						String sResult = common.getStr(invokeJS("repairObjectSequence", sColumnParagraphLine));
-						if (sResult.split("\n").length == sColumnParagraphLineAll.split("\n").length) {
-							sColumnParagraphLine = sResult.trim();
-						}
-					}
-
 					line.html = sColumnParagraphLine;
 
 					sColumnParagraphLineAll += sColumnParagraphLine; // + "\n";
@@ -1248,21 +1224,6 @@ public class PDFExtract {
 				}
 
 				sColumnParagraphLineAll += "\n";
-
-				if (scriptEngine != null && sColumnParagraphLineAll.length() > 0) {
-					// call isHeader
-					String sResult = common.getStr(invokeJS("isHeader", sColumnParagraphLineAll));
-					if (sResult.split("\n").length == sColumnParagraphLineAll.split("\n").length) {
-						sColumnParagraphLineAll = sResult;
-					}
-
-					// call isFooter
-					sResult = common.getStr(invokeJS("isFooter", sColumnParagraphLineAll));
-					if (sResult.split("\n").length == sColumnParagraphLineAll.split("\n").length) {
-						sColumnParagraphLineAll = sResult;
-					}
-				}
-
 				String sColumnParagraph = GetTemplate(Tempate.columnparagraph.toString())
 						.replace("[" + TempateID.COLUMNPARAGRAPHID.toString() + "]",
 								common.getStr(iPageID) + "c" + common.getStr(iColumnID) + "p"
@@ -1277,10 +1238,11 @@ public class PDFExtract {
 				sColumnParagraphAll += sColumnParagraph;
 				iParagraphID++;
 
+				paragraph.html = sColumnParagraph.trim();
+
 			}
 
 			sColumnParagraphAll += "\n";
-
 			String sColumn = GetTemplate(Tempate.column.toString())
 					.replace("[" + TempateID.COLUMNID.toString() + "]",
 							common.getStr(iPageID) + "c" + common.getStr(iColumnID))
@@ -1293,6 +1255,8 @@ public class PDFExtract {
 			sColumn = StringUtils.chomp(sColumn);
 			sColumnAll += sColumn;
 			iColumnID++;
+
+			column.html = sColumn.trim();
 		}
 		sColumnAll += "\n";
 
@@ -1313,14 +1277,18 @@ public class PDFExtract {
 			text = text.substring(text.indexOf("<body"));
 			text = text.substring(0, text.indexOf("</body>"));
 		}
-		text = text.replaceAll("<[^>]*>", "");
-		text = text.replaceAll("\n{2,100}", "\n");
+		text = Jsoup.parse(text).text();
+
 		return text;
 	}
 
 	private StringBuffer GetLanguage(StringBuffer htmlBuffer, AtomicReference<List<PageObject>> refPages) {
 
 		String sContent = htmlBuffer.toString();
+		if (common.IsEmpty(sContent)) {
+			return htmlBuffer;
+		}
+
 		String text = "";
 		String defaultLang = "";
 
@@ -1334,7 +1302,15 @@ public class PDFExtract {
 		// All
 		// get text all
 		text = removeHtmlTag(sContent);
+		if (common.IsEmpty(text)) {
+			return htmlBuffer;
+		}
+
 		results = detectLang.find(text);
+
+		if (results == null || results.size() == 0) {
+			return htmlBuffer;
+		}
 
 		int i = 0;
 		LanguageResult result0 = results.get(0);
@@ -1394,12 +1370,14 @@ public class PDFExtract {
 					while (m.find()) {
 						text = removeHtmlTag(m.group(2));
 						results = detectLang.find(text);
-						LanguageResult result = results.get(0);
+						if (results != null && results.size() > 0) {
+							LanguageResult result = results.get(0);
 
-						if (!result.language.equals(defaultLang)) {
-							String spanOpen = m.group(1);
-							spanOpen = spanOpen.replace("<span", "<span lang=\"" + result.language + "\"");
-							m.appendReplacement(pageBuffer, spanOpen + "$2$3");
+							if (!result.language.equals(defaultLang)) {
+								String spanOpen = m.group(1);
+								spanOpen = spanOpen.replace("<span", "<span lang=\"" + result.language + "\"");
+								m.appendReplacement(pageBuffer, spanOpen + "$2$3");
+							}
 						}
 					}
 					m.appendTail(pageBuffer);
@@ -1410,55 +1388,16 @@ public class PDFExtract {
 			}
 		}
 
-		if (!oneLangDocument && !oneLangPage) {
+		String prefix = sContent.substring(0, sContent.indexOf("<div"));
+		String suffix = sContent.substring(sContent.indexOf("</body>"));
 
-			String prefix = sContent.substring(0, sContent.indexOf("<div"));
-			String suffix = sContent.substring(sContent.indexOf("</body>"));
-
-			StringBuilder allPage = new StringBuilder();
-			for (PageObject page : pages) {
-				allPage.append(page.html.toString().trim());
-				allPage.append("\n");
-			}
-
-			sContent = prefix + allPage.toString() + suffix;
-		}
-
+		StringBuilder allPage = new StringBuilder();
 		for (PageObject page : pages) {
-			for (ColumnObject column : page.columns) {
-				for (ParagraphObject paragraph : column.paragraphs) {
-					StringBuilder sbParagraph = new StringBuilder();
-					for (LineObject line : paragraph.lines) {
-						sbParagraph.append(line.html);
-					}
-
-					String sParagraph = sbParagraph.toString();
-					String language = defaultLang;
-
-					String sResult = common.getStr(invokeJS("analyzeJoins", sParagraph, language));
-					sbParagraph = new StringBuilder(sResult);
-				}
-			}
+			allPage.append(page.html.toString());
 		}
+		sContent = prefix + allPage.toString() + suffix;
 
 		return new StringBuffer(sContent);
-	}
-
-	/**
-	 * Invoke JS function
-	 */
-	private Object invokeJS(String function, Object... args) {
-		Object result = null;
-		if (scriptEngine != null && !failFunctionList.contains(function)) {
-			try {
-				result = scriptEngine.invokeFunction(function, args);
-			} catch (Exception e) {
-				if (!failFunctionList.contains(function)) {
-					failFunctionList.add(function);
-				}
-			}
-		}
-		return result;
 	}
 
 	/**

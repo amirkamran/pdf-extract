@@ -17,12 +17,6 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import javax.script.Compilable;
-import javax.script.CompiledScript;
-import javax.script.Invocable;
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineManager;
-
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 
@@ -31,6 +25,7 @@ import org.apache.commons.io.FilenameUtils;
  */
 public class Common {
 	Object _oLockerFile = new Object();
+	private int verbose = 0;
 
 	public static boolean isWindows() {
 		String os = System.getProperty("os.name").toLowerCase();
@@ -303,10 +298,6 @@ public class Common {
 		System.out.println(
 				"specifies the path to write the log file to.\n\t\t\tAs it is common for PDF files to have issues when processing\n\t\t\tsuch as being password protected or other forms of restricted permissions,\n\t\t\tthe log file can be written to a specifed location for additional processing.\n\t\t\tIf not specified, then the log file will write to stdout.");
 
-		System.out.print("-R <rule_path>\t\t");
-		System.out.println(
-				"specifies a custom set of rules to process joins between lines.\n\t\t\tAs this can vary considerably between languages, a custom set of rules can be implimented.\n\t\t\tSee Joining Lines for more details.\n\t\t\tIf no path is specified, then PDFExtract.js will be loaded from the same folder as the PDFExtract.jar execution.\n\t\t\tIf the PDFExtract.js file cannot be found, then processing will continue without analyzing the joins between lines.");
-
 		System.out.print("-T <number_threads>\t");
 		System.out.println(
 				"specifies the number of threads to run concurrently when processing PDF files.\n\t\t\tOne file can be processed per thread. If not specified, then the default valur of 1 thread is used.");
@@ -322,6 +313,13 @@ public class Common {
 		System.out.print("-o <options>\t\t");
 		System.out.println(
 				"specifies control parameters.\n\t\t\t(Reserved for future use where more conifgurable parameters will be permitted.)");
+
+		System.out.print("-v\t\t\t");
+		System.out.println("enables Verbose mode.");
+
+		System.out.print("--bypassscript\t\t");
+		System.out.println("bypass execute script engine");
+
 		System.out.println("------------------------");
 	}
 
@@ -357,51 +355,53 @@ public class Common {
 	}
 
 	public void writeLog(String path, String inputfile, String message, boolean isError) {
-		synchronized (_oLockerFile) {
+		if (verbose == 1) {
+			synchronized (_oLockerFile) {
 
-			BufferedWriter oBuffer = null;
-			try {
+				BufferedWriter oBuffer = null;
+				try {
 
-				// Get current date
-				Calendar oCal = Calendar.getInstance();
-				//
-				SimpleDateFormat oDateTimeFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.S");
-				String logfilepath = path;
-				if (isWindows())
-					logfilepath = logfilepath.replace("/", "\\");
-				else
-					logfilepath = logfilepath.replace("\\", "/");
+					// Get current date
+					Calendar oCal = Calendar.getInstance();
+					//
+					SimpleDateFormat oDateTimeFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.S");
+					String logfilepath = path;
+					if (isWindows())
+						logfilepath = logfilepath.replace("/", "\\");
+					else
+						logfilepath = logfilepath.replace("\\", "/");
 
-				File file = new File(logfilepath);
-				if (file.getParent() != null) {
-					File dir = new File(file.getParent());
-					if (!dir.exists()) {
-						// create directory
-						dir.mkdirs();
+					File file = new File(logfilepath);
+					if (file.getParent() != null) {
+						File dir = new File(file.getParent());
+						if (!dir.exists()) {
+							// create directory
+							dir.mkdirs();
+						}
 					}
-				}
 
-				if (!IsEmpty(inputfile)) {
-					message = "File: " + inputfile + ", " + message;
-				}
+					if (!IsEmpty(inputfile)) {
+						message = "File: " + inputfile + ", " + message;
+					}
 
-				// Create or append file
-				FileWriter oFileWriter = new FileWriter(logfilepath, true);
-				oBuffer = new BufferedWriter(oFileWriter);
-				String text = oDateTimeFormat.format(oCal.getTime()) + "\t" + (isError ? "ERROR" : "INFO") + "\t"
-						+ message;
-				//
-				oBuffer.write(text);
-				oBuffer.newLine();
+					// Create or append file
+					FileWriter oFileWriter = new FileWriter(logfilepath, true);
+					oBuffer = new BufferedWriter(oFileWriter);
+					String text = oDateTimeFormat.format(oCal.getTime()) + "\t" + (isError ? "ERROR" : "INFO") + "\t"
+							+ message;
+					//
+					oBuffer.write(text);
+					oBuffer.newLine();
 
-			} catch (Exception ex) {
-				ex.printStackTrace();
-			} finally {
-				if (oBuffer != null) {
-					try {
-						oBuffer.close();
-					} catch (IOException ex) {
-						ex.printStackTrace();
+				} catch (Exception ex) {
+					ex.printStackTrace();
+				} finally {
+					if (oBuffer != null) {
+						try {
+							oBuffer.close();
+						} catch (IOException ex) {
+							ex.printStackTrace();
+						}
 					}
 				}
 			}
@@ -473,51 +473,22 @@ public class Common {
 	}
 
 	public void print(String file, String message) {
-		if (!IsEmpty(file)) {
-			message = "File: " + file + ", " + message;
+		if (verbose == 1) {
+			if (!IsEmpty(file)) {
+				message = "File: " + file + ", " + message;
+			}
+			System.out.println(message);
 		}
-		System.out.println(message);
 	}
 
-	public String getCustomScript(String rulePath, String customScript) throws Exception {
-		if (IsEmpty(customScript)) {
-			if (!IsEmpty(rulePath) && !IsExist(rulePath)) {
-				rulePath = "";
-			}
-			if (IsEmpty(rulePath) && IsExist("PDFExtract.js")) {
-				rulePath = "PDFExtract.js";
-			}
-
-			// read custom script
-			if (!IsEmpty(rulePath) && IsEmpty(customScript)) {
-				customScript = readFile(rulePath);
-			}
-		}
-
-		return customScript;
-	}
-
-	public Invocable getJSEngine(String customScript) {
-		try {
-			ScriptEngineManager manager = new ScriptEngineManager();
-			ScriptEngine engine = manager.getEngineByName("JavaScript");
-			//
-			Invocable jsEngine = (Invocable) engine;
-			Compilable compEngine = (Compilable) engine;
-			CompiledScript script = compEngine.compile(customScript);
-			script.eval();
-
-			return jsEngine;
-		} catch (Exception e) {
-			return null;
-		}
-
+	public void setVerbose(int val) {
+		verbose = val;
 	}
 
 	public HashMap<String, String> getSearchReplaceList() {
 		HashMap<String, String> list = new HashMap<String, String>();
 
-		String searchReplacePath = getJarPath() + "/search-replace.tab";
+		String searchReplacePath = combine(getJarPath(), "search-replace.tab");
 		if (IsExist(searchReplacePath)) {
 			//
 			try {
@@ -553,7 +524,7 @@ public class Common {
 
 		return rtext;
 	}
-	
+
 	public String getStackTrace(Exception exception) {
 		String text = "";
 		Writer writer = null;
@@ -575,7 +546,7 @@ public class Common {
 		}
 		return text;
 	}
-	
+
 	public String getOutputError(Exception e) {
 
 		StringBuffer html = new StringBuffer("");
@@ -593,7 +564,7 @@ public class Common {
 		html.append("</stacktrace>" + "\n");
 		html.append("</error>" + "\n");
 		html.append("</html>" + "\n");
-		
+
 		return html.toString();
 	}
 }

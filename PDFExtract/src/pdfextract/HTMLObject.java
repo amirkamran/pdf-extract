@@ -93,6 +93,17 @@ public class HTMLObject {
 			this.bottom = this.top + this.height;
 			this.right = this.left + this.width;
 		}
+		
+		public String getHtml() {
+			String prefix = this.html.substring(0, this.html.indexOf(">") + 1);
+			String suffix = this.html.substring(this.html.lastIndexOf("<"));
+			
+			StringBuilder sb = new StringBuilder(); 
+			for (ParagraphObject paragraph : paragraphs) {
+				sb.append(paragraph.html + "\n");
+			}
+			return prefix + "\n" + sb.toString() + suffix;
+		}
 	}
 
 	public static class PageObject {
@@ -103,5 +114,16 @@ public class HTMLObject {
 		public List<ColumnObject> columns = new ArrayList<ColumnObject>();
 		public StringBuilder html = new StringBuilder();
 		public String language = "";
+
+		public String getHtml() {
+			String prefix = this.html.substring(0, this.html.indexOf(">") + 1);
+			String suffix = this.html.substring(this.html.lastIndexOf("<"));
+			
+			StringBuilder sb = new StringBuilder(); 
+			for (ColumnObject column : columns) {
+				sb.append(column.html + "\n");
+			}
+			return prefix + "\n" + sb.toString() + suffix;
+		}
 	}
 }
